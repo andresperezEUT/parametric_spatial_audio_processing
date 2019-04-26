@@ -8,7 +8,7 @@ import soundfile as sf
 import matplotlib.pyplot as plt
 import numpy as np
 
-audio_path = "/Volumes/Dinge/ambiscaper/generated/soundscape0/soundscape0.wav"
+audio_path = "/Volumes/Dinge/ambiscaper/database/soundscape0/soundscape0.wav"
 data, sr = sf.read(audio_path)
 
 
@@ -19,9 +19,19 @@ data, sr = sf.read(audio_path)
 # data[1,:] = 0.25
 # data[2,:] = 0.125
 
-signal = psa.Signal(data[:300000].T, sr, ordering='acn',norm='sn3d')
-# psa.plot_audio_waveform(signal,'Signal Waveform')
-# plt.show()
+signal = psa.Signal(data[:30000].T, sr, ordering='acn',norm='sn3d')
+
+signal_limit = signal.limit_envelope(th=0.005)
+print(np.shape(signal_limit.data))
+print(np.shape(signal.data))
+print(signal_limit.data)
+
+
+for i in range(np.shape(signal_limit.data)[1]):
+    print(signal_limit.data[:,i])
+psa.plot_signal(signal,'Signal Waveform')
+psa.plot_signal(signal_limit,'limit')
+plt.show()
 #
 # print(signal.data)
 #
@@ -32,11 +42,30 @@ signal = psa.Signal(data[:300000].T, sr, ordering='acn',norm='sn3d')
 # stft = psa.Stft(signal)
 
 stft = psa.Stft.fromSignal(signal)
+directivity = psa.compute_directivity(stft)
+
+
+doa = psa.compute_DOA(stft)
+h = psa.plot_doa_2d_histogram(doa)
+print(h)
+# masked1 = stft.apply_softmask(directivity,0.9)
+
+
+
+# dpd = psa.compute_DPD_test(stft,1,1,2.)
+
+
 # psa.plot_magnitude_spectrogram(stft)
-# plt.show()
-doa_kn = psa.compute_DOA(stft)
-psa.plot_doa(doa_kn)
+# psa.plot_mask(directivity,"directivity")
+# psa.plot_mask(masked1,"masked1")
 plt.show()
+
+# input('Press ENTER to exit')
+
+
+
+
+
 # print(doa_kn.data)
 
 
@@ -46,13 +75,13 @@ plt.show()
 #
 #
 # p_n = psa.compute_sound_pressure(signal)
-# # psa.plot_audio_waveform(p_n)
+# # psa.plot_signal(p_n)
 #
 # p_kn = psa.compute_sound_pressure(stft)
 # # psa.plot_magnitude_spectrogram(p_kn)
 #
 # u_n = psa.compute_particle_velocity(signal)
-# # psa.plot_audio_waveform(u_n)
+# # psa.plot_signal(u_n)
 #
 # u_kn = psa.compute_particle_velocity(stft)
 # # psa.plot_magnitude_spectrogram(u_kn)
@@ -62,13 +91,13 @@ plt.show()
 # #         print(p_kn.data[0,f,n])
 #
 # i_n = psa.compute_intensity_vector(signal)
-# # psa.plot_audio_waveform(i_n)
+# # psa.plot_signal(i_n)
 #
 # i_kn = psa.compute_intensity_vector(stft)
 # # psa.plot_magnitude_spectrogram(i_kn)
 #
 # e_n = psa.compute_energy_density(signal)
-# # psa.plot_audio_waveform(e_n)
+# # psa.plot_signal(e_n)
 #
 # e_kn = psa.compute_energy_density(stft)
 #
@@ -88,7 +117,7 @@ plt.show()
 # # psa.plot_doa(doa_n)
 #
 #
-# # psa.plot_audio_waveform(doa_n)
+# # psa.plot_signal(doa_n)
 #
 #
 #
@@ -103,7 +132,7 @@ plt.show()
 # psa.plot_diffuseness(f_n)
 # # plt.figure(plt_idx)
 # # plt_idx+=1
-# # psa.plot_audio_waveform(f_n)
+# # psa.plot_signal(f_n)
 #
 # f_kn = psa.compute_diffuseness(stft)
 #
@@ -262,9 +291,9 @@ plt.show()
 # plt.pcolormesh(np.abs(scm),norm=LogNorm(vmin=1e-10, vmax=1))
 # plt.show()
 
-from parametric_spatial_audio_processing.util import compute_signal_envelope
-from parametric_spatial_audio_processing.util import find_contiguous_region
-
+# from parametric_spatial_audio_processing.util import compute_signal_envelope
+# from parametric_spatial_audio_processing.util import find_contiguous_region
+#
 # a = np.zeros(16)
 # a[3:15] = 1.0
 # a[7]=0.0
@@ -275,11 +304,11 @@ from parametric_spatial_audio_processing.util import find_contiguous_region
 # print(q)
 #
 
-c = compute_signal_envelope(signal.data[0],windowsize=1024)
-print(c)
-q = find_contiguous_region(c,1024,0.01)
-
-z = psa.segmentate_audio(signal,windowsize=1024,th=0.01)
+# c = compute_signal_envelope(signal.data[0],windowsize=1024)
+# print(c)
+# q = find_contiguous_region(c,1024,0.01)
+#
+# z = psa.segmentate_audio(signal,windowsize=1024,th=0.01)
 #
 #
 # print(q)

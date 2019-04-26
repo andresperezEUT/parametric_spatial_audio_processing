@@ -10,6 +10,7 @@
 
 import numpy as np
 import parametric_spatial_audio_processing.core
+import copy
 
 # BFormat Channel order dictionaries
 # TODO: extend to higher orders
@@ -19,7 +20,7 @@ fuma2acn = {0: 0, 1: 2, 2: 3, 3: 1}
 
 def _validate_bformat_array(array):
     # ndarray, 4 channel, shape [channels,samples]
-    assert type(array) is np.ndarray
+    # assert type(array) is np.ndarray
     assert np.ndim(array) == 2
     assert np.shape(array)[0] == 4
 
@@ -140,8 +141,20 @@ def cartesian_2_spherical_t(ndarray_cartesian):
                 + np.power(y, 2)
                 + np.power(z, 2))
 
+    # Substitute all zeros by nans, just to avoid runtimeWarning
+    # TODO: probably there's a much more pythonic way to write that...
+    for i in range(len(r)):
+        if r[i]==0:
+            r[i] = np.nan
+
     azimuth = np.arctan2(y, x)
     elevation = np.arcsin(z / r)
+
+    # If there's a nan in elevation (because of r), then override it also in azimuth...
+    # TODO: probably there's a much more pythonic way to write that...
+    for i in range(len(azimuth)):
+        if np.isnan(elevation[i]):
+            azimuth[i] = np.nan
 
     return np.asarray([azimuth, elevation, r])
 
@@ -157,9 +170,22 @@ def cartesian_2_spherical_tf(ndarray_cartesian):
                 + np.power(y, 2)
                 + np.power(z, 2))
 
-    r_norm = r
+    # Substitute all zeros by nans, just to avoid runtimeWarning
+    # TODO: probably there's a much more pythonic way to write that...
+    for i in range(np.shape(r)[0]):
+        for j in range(np.shape(r)[1]):
+            if r[i][j]==0:
+                r[i][j] = np.nan
+
     azimuth = np.arctan2(y, x)
     elevation = np.arcsin(z / r)
+
+    # If there's a nan in elevation (because of r), then override it also in azimuth...
+    # TODO: probably there's a much more pythonic way to write that...
+    for i in range(np.shape(azimuth)[0]):
+        for j in range(np.shape(azimuth)[1]):
+            if np.isnan(elevation[i][j]):
+                azimuth[i][j] = np.nan
 
     return np.asarray([azimuth, elevation, r])
 
@@ -185,6 +211,13 @@ def spatial_covariance_matrix(stft,ch):
 
 
 def compute_signal_envelope(signal, windowsize=1024):
+    '''
+    Computing from W channel!!
+
+    :param signal:
+    :param windowsize:
+    :return:
+    '''
 
     window = np.zeros(windowsize)
     envelope = np.zeros((1,signal.get_num_frames()))
@@ -243,4 +276,16 @@ def segmentate_audio(signal, windowsize=1024, th=0.01):
     :return:
     '''
     env = compute_signal_envelope(signal.data[0],windowsize)
-    return find_contiguous_region(env,windowsize,th)
+    return find_contiguous_region(env.data[0],windowsize,th)
+
+
+def moving_average(a, n=3) :
+    """
+    Compute moving average of the signal
+    :param a:
+    :param n:
+    :return:
+    """
+    ret = np.cumsum(a, dtype=float)
+    ret[n:] = ret[n:] - ret[:-n]
+    return ret[n - 1:] / n
