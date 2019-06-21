@@ -494,7 +494,7 @@ class Stft:
 
 
 
-    def apply_softmask(self, mask, th):
+    def apply_softmask(self, mask, th=None):
         '''
         Returns a new stft containing only the TF values of self with evaluate
         positive to be equal or greater than the provided softmask .
@@ -523,19 +523,38 @@ class Stft:
         # Create a new matrix with the same self.fata dimensions
         masked_data = np.ndarray(np.shape(self.data))
 
-        # Evaluate each TF bin with mask, and copy the value if condition is True,
-        # and place a numpy NaN if False
-        for k in range(self.get_num_frequency_bins()):
-            for n in range(self.get_num_time_bins()):
 
-                # masks are usually single-channel
-                if mask.data[:, k, n] >= th:
-                    # print(self.data[m, k, n])
-                    masked_data[:, k, n] = self.data[:, k, n]
-                else:
-                    masked_data[:, k, n] = np.nan
+        if th is not None:
+            # Scalar th defined
+            # Evaluate each TF bin with mask, and copy the value if condition is True,
+            # and place a numpy NaN if False
+            for k in range(self.get_num_frequency_bins()):
+                for n in range(self.get_num_time_bins()):
+
+                    # masks are usually single-channel
+                    if mask.data[:, k, n] >= th:
+                        # print(self.data[m, k, n])
+                        masked_data[:, k, n] = self.data[:, k, n]
+                    else:
+                        masked_data[:, k, n] = np.nan
+        else:
+            # Th is mask
+            # Evaluate each TF bin with mask, and copy the value if condition is True,
+            # and place a numpy NaN if False
+            for k in range(self.get_num_frequency_bins()):
+                for n in range(self.get_num_time_bins()):
+                    th = mask.data[:, k, n]
+                    v = self.data[:, k, n]
+
+                    # masks are usually single-channel
+                    if v > th:
+                        # print(self.data[m, k, n])
+                        masked_data[:, k, n] = v
+                    else:
+                        masked_data[:, k, n] = np.nan
 
         return Stft(self.t, self.f, masked_data, self.sample_rate)
+
 
 
     def compute_mask(self,th,th_type='absolute'):
@@ -557,17 +576,31 @@ class Stft:
             th = np.percentile(self.data,th)
             pass
 
-        # Evaluate TFbin>=th, and return 1 if True, np.nan if False
-        for k in range(self.get_num_frequency_bins()):
-            for n in range(self.get_num_time_bins()):
+        # th scalar
+        if isinstance(th, Number):
+            # Evaluate TFbin>=th, and return 1 if True, np.nan if False
+            for k in range(self.get_num_frequency_bins()):
+                for n in range(self.get_num_time_bins()):
 
-                # masks are usually single-channel
-                if self.data[:, k, n] >= th:
-                    # print(self.data[m, k, n])
-                    masked_data[:, k, n] = 1
-                else:
-                    masked_data[:, k, n] = np.nan
+                    # masks are usually single-channel
+                    if self.data[:, k, n] >= th:
+                        # print(self.data[m, k, n])
+                        masked_data[:, k, n] = 1
+                    else:
+                        masked_data[:, k, n] = np.nan
+        # th matrix. Todo check dimensions
+        elif isinstance(th, Stft):
+            for k in range(self.get_num_frequency_bins()):
+                for n in range(self.get_num_time_bins()):
 
+                    # masks are usually single-channel
+                    if self.data[:, k, n] >= th.data[:, k, n]:
+                        # print(self.data[m, k, n])
+                        masked_data[:, k, n] = 1
+                    else:
+                        masked_data[:, k, n] = np.nan
+        else:
+            raise TypeError
 
         return Stft(self.t, self.f, masked_data, self.sample_rate)
 
@@ -834,7 +867,7 @@ class Stft:
                 sigma = (block_size - 1) / 6.0
             else:
                 sigma = param
-            ndi.gaussian_filter(v, sigma, output=thresh_image, mode=mode,
+            ndi.gaussian_filter(self.data, sigma, output=thresh_image, mode=mode,
                                 cval=cval)
         elif method == 'mean':
             mask = 1. / block_size * np.ones((block_size,))
@@ -850,7 +883,7 @@ class Stft:
             raise ValueError("Invalid method specified. Please use `generic`, "
                              "`gaussian`, `mean`, or `median`.")
 
-        return thresh_image - offset
+        return Stft(self.t, self.f, thresh_image - offset, self.sample_rate)
 
 
     def compute_msc(self,dt=10):
@@ -1216,6 +1249,11 @@ class Stft:
         return Stft(self.t, self.f, ksi, self.sample_rate)
 
     def compute_ksi_re(self, r=5):
+        """
+        fast version
+        :param r:
+        :return:
+        """
 
         K = self.get_num_frequency_bins()
         N = self.get_num_time_bins()
@@ -1223,26 +1261,19 @@ class Stft:
         z = p0 * c
 
         # Time average computed from both past and future samples
-        for k in range(K):
-            for n in range(r, N - r):
+        for n in range(r, N - r):
 
-                W = self.data[0, k, n - r:n + r + 1]
-                X = self.data[1:, k, n - r:n + r + 1]
+            P = self.data[0, :, n - r:n + r + 1]
+            U = -1*self.data[1:, :, n - r:n + r + 1] / z
 
-                P = W
-                U = -X / z
+            num = np.linalg.norm(np.mean(np.real(np.conjugate(P) * U), axis=2), axis=0)
+            den = np.sqrt( np.mean(np.power(np.linalg.norm(U, axis=0), 2), axis=1) * np.mean(np.power(abs(P), 2), axis=1 ))
 
-                num = np.linalg.norm(np.mean(np.real(np.conjugate(P) * U), axis=1))
-                den = np.sqrt( np.mean(np.power(np.linalg.norm(U, axis=0), 2)) * np.mean(np.power(abs(P), 2)) )
+            ksi[0, :, n] = num/den
 
-                ksi[0, k, n] = float(num) / den
-
-            # Borders: copy neighbor values
-            for n in range(0, r):
-                ksi[0, k, n] = ksi[0, k, r]
-
-            for n in range(N - r, N):
-                ksi[0, k, n] = ksi[0, k, N - r - 1]
+        # Borders: copy neighbor values
+        ksi[0, :, :r] = np.expand_dims(ksi[0, :, r], axis=1)
+        ksi[0, :, N-r:] = np.expand_dims(ksi[0, :, N-r-1], axis=1)
 
         return Stft(self.t, self.f, ksi, self.sample_rate)
 
@@ -1460,32 +1491,33 @@ class Stft:
 
         return Stft(self.t, self.f, ita, self.sample_rate)
 
+
     def compute_ita_re(self, r=5):
+        """
+        fast version
+        """
 
         K = self.get_num_frequency_bins()
         N = self.get_num_time_bins()
         ita = np.zeros((1, K, N))
 
         # Time average computed from both past and future samples
-        for k in range(K):
-            for n in range(r, N - r):
+        for n in range(r, N - r):
 
-                W = self.data[0, k, n-r:n+r+1]
-                X = self.data[1:, k, n-r:n+r+1]
+            W = self.data[0, :, n-r:n+r+1]
+            X = self.data[1:, :, n-r:n+r+1]
 
-                num = 2*np.linalg.norm(np.mean(np.real(np.conjugate(W)*X),axis=1))
-                den = np.mean(np.power(abs(W), 2) + np.power(np.linalg.norm(X,axis=0), 2))
+            num = 2*np.linalg.norm(np.mean(np.real(np.conjugate(W)*X), axis=2), axis=0)
+            den = np.mean( np.power(abs(W), 2) + np.power(np.linalg.norm(X,axis=0), 2), axis=1)
 
-                ita[0, k, n] = float(num)/den
+            ita[0, :, n] = num/den
 
-            # Borders: copy neighbor values
-            for n in range(0, r):
-                ita[0, k, n] = ita[0, k, r]
-
-            for n in range(N - r, N):
-                ita[0, k, n] = ita[0, k, N - r - 1]
+        # Borders: copy neighbor values
+        ita[0, :, :r] = np.expand_dims(ita[0, :, r], axis=1)
+        ita[0, :, N-r:] = np.expand_dims(ita[0, :, N-r-1], axis=1)
 
         return Stft(self.t, self.f, ita, self.sample_rate)
+
 
     def compute_ita_re_squared(self, r=5):
 

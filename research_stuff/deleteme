@@ -1,0 +1,212 @@
+            def histogram(image, nbins=256):
+                """Return histogram of image.
+                Unlike `numpy.histogram`, this function returns the centers of bins and
+                does not rebin integer arrays. For integer arrays, each integer value has
+                its own bin, which improves speed and intensity-resolution.
+                The histogram is computed on the flattened image: for color images, the
+                function should be used separately on each channel to obtain a histogram
+                for each color channel.
+                Parameters
+                ----------
+                image : array
+                    Input image.
+                nbins : int
+                    Number of bins used to calculate histogram. This value is ignored for
+                    integer arrays.
+                Returns
+                -------
+                hist : array
+                    The values of the histogram.
+                bin_centers : array
+                    The values at the center of the bins.
+                See Also
+                --------
+                cumulative_distribution
+                Examples
+                --------
+                >>> from skimage import data, exposure, img_as_float
+                >>> image = img_as_float(data.camera())
+                >>> np.histogram(image, bins=2)
+                (array([107432, 154712]), array([ 0. ,  0.5,  1. ]))
+                >>> exposure.histogram(image, nbins=2)
+                (array([107432, 154712]), array([ 0.25,  0.75]))
+                """
+                sh = image.shape
+                if len(sh) == 3 and sh[-1] < 4:
+                    warn("This might be a color image. The histogram will be "
+                         "computed on the flattened image. You can instead "
+                         "apply this function to each color channel.")
+
+                # For integer types, histogramming with bincount is more efficient.
+                if np.issubdtype(image.dtype, np.integer):
+                    offset = 0
+                    image_min = np.min(image)
+                    if image_min < 0:
+                        offset = image_min
+                        image_range = np.max(image).astype(np.int64) - image_min
+                        # get smallest dtype that can hold both minimum and offset maximum
+                        offset_dtype = np.promote_types(np.min_scalar_type(image_range),
+                                                        np.min_scalar_type(image_min))
+                        if image.dtype != offset_dtype:
+                            # prevent overflow errors when offsetting
+                            image = image.astype(offset_dtype)
+                        image = image - offset
+                    hist = np.bincount(image.ravel())
+                    bin_centers = np.arange(len(hist)) + offset
+
+                    # clip histogram to start with a non-zero bin
+                    idx = np.nonzero(hist)[0][0]
+                    return hist[idx:], bin_centers[idx:]
+                else:
+                    hist, bin_edges = np.histogram(image.flat, bins=nbins)
+                    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2.
+                    return hist, bin_centers
+
+            def threshold_otsu(image, nbins=256):
+                """Return threshold value based on Otsu's method.
+                Parameters
+                ----------
+                image : (N, M) ndarray
+                    Grayscale input image.
+                nbins : int, optional
+                    Number of bins used to calculate histogram. This value is ignored for
+                    integer arrays.
+                Returns
+                -------
+                threshold : float
+                    Upper threshold value. All pixels with an intensity higher than
+                    this value are assumed to be foreground.
+                Raises
+                ------
+                ValueError
+                     If `image` only contains a single grayscale value.
+                References
+                ----------
+                .. [1] Wikipedia, https://en.wikipedia.org/wiki/Otsu's_Method
+                Examples
+                --------
+                >>> from skimage.data import camera
+                >>> image = camera()
+                >>> thresh = threshold_otsu(image)
+                >>> binary = image <= thresh
+                Notes
+                -----
+                The input image must be grayscale.
+                """
+                if len(image.shape) > 2 and image.shape[-1] in (3, 4):
+                    msg = "threshold_otsu is expected to work correctly only for " \
+                          "grayscale images; image shape {0} looks like an RGB image"
+                    warn(msg.format(image.shape))
+
+                # Check if the image is multi-colored or not
+                if image.min() == image.max():
+                    raise ValueError("threshold_otsu is expected to work with images "
+                                     "having more than one color. The input image seems "
+                                     "to have just one color {0}.".format(image.min()))
+
+                hist, bin_centers = histogram(image.ravel(), nbins)
+                hist = hist.astype(float)
+
+                # class probabilities for all possible thresholds
+                weight1 = np.cumsum(hist)
+                weight2 = np.cumsum(hist[::-1])[::-1]
+                # class means for all possible thresholds
+                mean1 = np.cumsum(hist * bin_centers) / weight1
+                mean2 = (np.cumsum((hist * bin_centers)[::-1]) / weight2[::-1])[::-1]
+
+                # Clip ends to align class 1 and class 2 variables:
+                # The last value of `weight1`/`mean1` should pair with zero values in
+                # `weight2`/`mean2`, which do not exist.
+                variance12 = weight1[:-1] * weight2[1:] * (mean1[:-1] - mean2[1:]) ** 2
+
+                idx = np.argmax(variance12)
+                threshold = bin_centers[:-1][idx]
+                return threshold
+
+            from scipy import ndimage as ndi
+
+            def threshold_local(image, block_size, method='gaussian', offset=0,
+                                mode='reflect', param=None, cval=0):
+                """Compute a threshold mask image based on local pixel neighborhood.
+                Also known as adaptive or dynamic thresholding. The threshold value is
+                the weighted mean for the local neighborhood of a pixel subtracted by a
+                constant. Alternatively the threshold can be determined dynamically by a
+                given function, using the 'generic' method.
+                Parameters
+                ----------
+                image : (N, M) ndarray
+                    Input image.
+                block_size : int
+                    Odd size of pixel neighborhood which is used to calculate the
+                    threshold value (e.g. 3, 5, 7, ..., 21, ...).
+                method : {'generic', 'gaussian', 'mean', 'median'}, optional
+                    Method used to determine adaptive threshold for local neighbourhood in
+                    weighted mean image.
+                    * 'generic': use custom function (see `param` parameter)
+                    * 'gaussian': apply gaussian filter (see `param` parameter for custom\
+                                  sigma value)
+                    * 'mean': apply arithmetic mean filter
+                    * 'median': apply median rank filter
+                    By default the 'gaussian' method is used.
+                offset : float, optional
+                    Constant subtracted from weighted mean of neighborhood to calculate
+                    the local threshold value. Default offset is 0.
+                mode : {'reflect', 'constant', 'nearest', 'mirror', 'wrap'}, optional
+                    The mode parameter determines how the array borders are handled, where
+                    cval is the value when mode is equal to 'constant'.
+                    Default is 'reflect'.
+                param : {int, function}, optional
+                    Either specify sigma for 'gaussian' method or function object for
+                    'generic' method. This functions takes the flat array of local
+                    neighbourhood as a single argument and returns the calculated
+                    threshold for the centre pixel.
+                cval : float, optional
+                    Value to fill past edges of input if mode is 'constant'.
+                Returns
+                -------
+                threshold : (N, M) ndarray
+                    Threshold image. All pixels in the input image higher than the
+                    corresponding pixel in the threshold image are considered foreground.
+                References
+                ----------
+                .. [1] https://docs.opencv.org/modules/imgproc/doc/miscellaneous_transformations.html?highlight=threshold#adaptivethreshold
+                Examples
+                --------
+                >>> from skimage.data import camera
+                >>> image = camera()[:50, :50]
+                >>> binary_image1 = image > threshold_local(image, 15, 'mean')
+                >>> func = lambda arr: arr.mean()
+                >>> binary_image2 = image > threshold_local(image, 15, 'generic',
+                ...                                         param=func)
+                """
+                if block_size % 2 == 0:
+                    raise ValueError("The kwarg ``block_size`` must be odd! Given "
+                                     "``block_size`` {0} is even.".format(block_size))
+                # assert_nD(image, 2)
+                thresh_image = np.zeros(image.shape, 'double')
+                if method == 'generic':
+                    ndi.generic_filter(image, param, block_size,
+                                       output=thresh_image, mode=mode, cval=cval)
+                elif method == 'gaussian':
+                    if param is None:
+                        # automatically determine sigma which covers > 99% of distribution
+                        sigma = (block_size - 1) / 6.0
+                    else:
+                        sigma = param
+                    ndi.gaussian_filter(image, sigma, output=thresh_image, mode=mode,
+                                        cval=cval)
+                elif method == 'mean':
+                    mask = 1. / block_size * np.ones((block_size,))
+                    # separation of filters to speedup convolution
+                    ndi.convolve1d(image, mask, axis=0, output=thresh_image, mode=mode,
+                                   cval=cval)
+                    ndi.convolve1d(thresh_image, mask, axis=1, output=thresh_image,
+                                   mode=mode, cval=cval)
+                elif method == 'median':
+                    ndi.median_filter(image, block_size, output=thresh_image, mode=mode,
+                                      cval=cval)
+                else:
+                    raise ValueError("Invalid method specified. Please use `generic`, "
+                                     "`gaussian`, `mean`, or `median`.")
+
+                return thresh_image - offset
